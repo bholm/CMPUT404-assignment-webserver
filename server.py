@@ -1,5 +1,7 @@
 #  coding: utf-8 
 import socketserver
+import os
+from urllib.parse import unquote
 
 # Copyright 2013 Abram Hindle, Eddie Antonio Santos
 # 
@@ -32,7 +34,45 @@ class MyWebServer(socketserver.BaseRequestHandler):
     def handle(self):
         self.data = self.request.recv(1024).strip()
         print ("Got a request of: %s\n" % self.data)
-        self.request.sendall(bytearray("OK",'utf-8'))
+        self.request_data = self.data.decode('utf-8').split()
+        self.request_path = self.request_data[1]
+        if self.request_path[-1] == "/":
+            self.request_path = self.request_path + "index.html"
+        self.method = self.request_data[0]
+        self.host = self.request_data[4]
+        self.root = os.path.abspath("www")
+        self.path = os.path.abspath(self.root + self.request_path)
+
+        if self.path.lower().endswith(".html") or self.path.lower().endswith(".htm"):
+            self.mimetype = "text/html"
+        elif self.path.lower().endswith(".css"):
+            self.mimetype = "text/css"
+        else:
+            self.mimetype = "application/octet-stream"
+
+        if self.method != "GET" and self.method != "HEAD":
+            self.request.sendall(bytearray('HTTP/1.1 405 Method Not Allowed\r\nAllow: GET, HEAD\r\nContent-Type: text/html\r\n\r\n<html><head><title>405 Method Not Allowed</title></head><body><center><h1>405 Method Not Allowed</h1></center><hr></body></html>','utf-8'))
+
+        # Checks for directory traversal attack
+        if not os.path.abspath(self.path).startswith(self.root):
+            self.error404()
+
+        try:
+            with open(self.path, "r") as f:
+                self.request.sendall(bytearray('HTTP/1.1 200 OK\r\nContent-Type: ' + self.mimetype + '\r\n\r\n'+f.read(), 'utf-8'))
+        except FileNotFoundError:
+            self.error404()
+        except IsADirectoryError:
+            self.error301()
+                
+
+    def error404(self):
+        self.request.sendall(bytearray('HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n<html><head><title>404 Not Found</title></head><body><center><h1>404 Not Found</h1></center><hr></body></html>','utf-8'))
+
+    def error301(self):
+        self.request.sendall(bytearray('HTTP/1.1 301 Moved Permanently\r\nLocation: http://' + self.host + self.request_path + '/\r\nContent-Type: text/html\r\n\r\n<html><head><title>301 Moved Permanently</title></head><body><center><h1>301 Moved Permanently</h1></center><hr></body></html>','utf-8'))
+
+
 
 if __name__ == "__main__":
     HOST, PORT = "localhost", 8080
